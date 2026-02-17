@@ -2,154 +2,239 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>VDJ Monitor - Progress Subscribed</title>
+    <title>VDJ Monitor - Professional Bridge</title>
+    <script src="https://cdn.jsdelivr.net/npm/osc-js@2.1.0/lib/osc.min.js"></script>
     <style>
         * { box-sizing: border-box; }
-        body { font-family: 'Inter', sans-serif; background: #050505; color: #e0e0e0; display: flex; gap: 30px; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .deck { background: #111; border-radius: 20px; padding: 30px; width: 360px; border: 4px solid #222; position: relative; transition: all 0.3s ease; opacity: 0.6; }
-        .deck.on-air { border-color: #ff3e3e; box-shadow: 0 0 40px rgba(255, 62, 62, 0.4); opacity: 1; transform: translateY(-5px); }
-        .play-indicator { display: inline-block; width: 12px; height: 12px; background: #333; margin-left: 10px; clip-path: polygon(0% 0%, 100% 50%, 0% 100%); transition: all 0.2s ease; }
-        .playing .play-indicator { background: #00ff88; box-shadow: 0 0 10px rgba(0, 255, 136, 0.6); transform: scale(1.2); }
-        .on-air-label { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); background: #ff3e3e; color: white; font-size: 0.7rem; font-weight: 900; padding: 4px 15px; border-radius: 4px; display: none; }
-        .on-air .on-air-label { display: block; }
-        .deck-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        h2 { margin: 0; color: #555; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 3px; display: flex; align-items: center; }
-        .pitch-badge { background: #000; padding: 5px 12px; border-radius: 8px; font-size: 0.9rem; color: #00ff88; font-family: monospace; border: 1px solid #333; }
-        .filename { font-size: 1.3rem; font-weight: 600; height: 3em; overflow: hidden; color: #fff; margin-bottom: 25px; line-height: 1.4; }
-        .progress-container { background: #222; height: 10px; border-radius: 10px; overflow: hidden; }
-        .progress-bar { height: 100%; width: 0%; transition: width 0.1s linear; background: #444; }
-        #deck-1.on-air .progress-bar { background: #007bff; }
-        #deck-2.on-air .progress-bar { background: #ff4757; }
+        body { 
+            font-family: 'Inter', -apple-system, sans-serif; 
+            background: #050505; 
+            color: #e0e0e0; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 20px; 
+            justify-content: center; 
+            align-items: center; 
+            min-height: 100vh; 
+            margin: 0; 
+        }
+
+        /* Debugger & Controls */
+        .controls { 
+            background: #1a1a1a; 
+            padding: 12px 25px; 
+            border-radius: 10px; 
+            border: 1px solid #333; 
+            display: flex; 
+            align-items: center; 
+            gap: 15px; 
+            font-size: 0.8rem; 
+        }
+        .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { 
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; 
+            background-color: #333; transition: .4s; border-radius: 20px; 
+        }
+        .slider:before { 
+            position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; 
+            background-color: white; transition: .4s; border-radius: 50%; 
+        }
+        input:checked + .slider { background-color: #00ff88; }
+        input:checked + .slider:before { transform: translateX(20px); }
+
+        /* Deck UI */
+        .decks-container { display: flex; gap: 30px; }
+        .deck { 
+            background: #111; 
+            border-radius: 20px; 
+            padding: 30px; 
+            width: 340px; 
+            border: 4px solid #222; 
+            opacity: 0.5; 
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+        }
+        .deck.on-air { 
+            border-color: #ff3e3e; 
+            opacity: 1; 
+            box-shadow: 0 0 30px rgba(255, 62, 62, 0.2);
+            transform: scale(1.02);
+        }
+        .deck-header {
+            color: #555;
+            font-size: 0.7rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+        .on-air .deck-header { color: #ff3e3e; }
+
+        .filename { 
+            font-size: 1.2rem; 
+            font-weight: 600; 
+            height: 2.8em; 
+            margin: 15px 0; 
+            color: #fff; 
+            overflow: hidden; 
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+        .progress-container { background: #222; height: 6px; border-radius: 3px; overflow: hidden; }
+        .progress-bar { height: 100%; width: 0%; background: #00ff88; transition: width 0.1s linear; }
+        .on-air .progress-bar { background: #ff3e3e; }
+        
+        #last-msg { color: #666; font-family: monospace; font-size: 0.7rem; }
     </style>
 </head>
 <body>
 
-    <div class="deck" id="deck-1">
-        <div class="on-air-label">ON AIR</div>
-        <div class="deck-header">
-            <h2>Deck 1 <span class="play-indicator"></span></h2>
-            <span id="d1-pitch" class="pitch-badge">0.00%</span>
-        </div>
-        <div class="filename" id="d1-file">---</div>
-        <div class="progress-container"><div id="d1-progress" class="progress-bar"></div></div>
+    <div class="controls">
+        <span>Debug Console</span>
+        <label class="switch">
+            <input type="checkbox" id="debug-toggle" checked>
+            <span class="slider"></span>
+        </label>
+        <span id="last-msg">Waiting for WebSocket...</span>
     </div>
 
-    <div class="deck" id="deck-2">
-        <div class="on-air-label">ON AIR</div>
-        <div class="deck-header">
-            <h2>Deck 2 <span class="play-indicator"></span></h2>
-            <span id="d2-pitch" class="pitch-badge">0.00%</span>
+    <div class="decks-container">
+        <div class="deck" id="deck-1">
+            <div class="deck-header">Deck 1</div>
+            <div class="filename" id="d1-file">Waiting for track...</div>
+            <div class="progress-container"><div id="d1-progress" class="progress-bar"></div></div>
         </div>
-        <div class="filename" id="d2-file">---</div>
-        <div class="progress-container"><div id="d2-progress" class="progress-bar"></div></div>
+
+        <div class="deck" id="deck-2">
+            <div class="deck-header">Deck 2</div>
+            <div class="filename" id="d2-file">Waiting for track...</div>
+            <div class="progress-container"><div id="d2-progress" class="progress-bar"></div></div>
+        </div>
     </div>
 
     <script>
         const socket = new WebSocket('ws://localhost:9122');
-        const decoder = new TextDecoder("utf-8");
-        const encoder = new TextEncoder();
+        socket.binaryType = 'arraybuffer';
+        const osc = new OSC();
+        
+        const debugToggle = document.getElementById('debug-toggle');
+        const states = { 1: { playing: false, audible: false }, 2: { playing: false, audible: false } };
 
-        const states = {
-            1: { playing: false, audible: false },
-            2: { playing: false, audible: false }
-        };
+        // Hex formatting helper
+        const toHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(' ');
 
+        // Spec-compliant OSC Message Sender
         function sendOSC(address) {
+            const encoder = new TextEncoder();
             const addrBytes = encoder.encode(address);
             const addrPad = Math.ceil((addrBytes.length + 1) / 4) * 4;
             const buf = new Uint8Array(addrPad + 4);
             buf.set(addrBytes);
-            buf[addrPad] = 44; // ','
+            buf.set([44, 0, 0, 0], addrPad); // Type tag string "," null-padded
+            
             socket.send(buf);
+            if (debugToggle.checked) console.log(`>>> OUT: ${address}`);
         }
 
         socket.onopen = () => {
-            const paths = [
-                "/vdj/query/deck/1/pitch", "/vdj/query/deck/2/pitch",
-                "/vdj/query/deck/1/get_filename", "/vdj/query/deck/2/get_filename",
-                "/vdj/query/deck/1/is_audible", "/vdj/query/deck/2/is_audible",
-                "/vdj/query/deck/1/play", "/vdj/query/deck/2/play",
-                "/vdj/subscribe/deck/1/pitch", "/vdj/subscribe/deck/2/pitch",
-                "/vdj/subscribe/deck/1/get_filename", "/vdj/subscribe/deck/2/get_filename",
-                "/vdj/subscribe/deck/1/play_pos", "/vdj/subscribe/deck/2/play_pos",
-                // ADDED: get_position subscriptions
-                "/vdj/subscribe/deck/1/get_position", "/vdj/subscribe/deck/2/get_position",
-                "/vdj/subscribe/deck/1/is_audible", "/vdj/subscribe/deck/2/is_audible",
-                "/vdj/subscribe/deck/1/play", "/vdj/subscribe/deck/2/play"
-            ];
-            paths.forEach(p => sendOSC(p));
+            document.getElementById('last-msg').innerText = "Connected";
+            const paths = ["get_filename", "get_position", "is_audible", "play"];
+            [1, 2].forEach(d => paths.forEach(p => {
+                sendOSC(`/vdj/subscribe/deck/${d}/${p}`);
+                sendOSC(`/vdj/query/deck/${d}/${p}`);
+            }));
         };
 
-        socket.onmessage = async (e) => {
-            let bytes = e.data instanceof Blob ? new Uint8Array(await e.data.arrayBuffer()) : new Uint8Array(e.data);
-            if (bytes.length < 8) return;
+        socket.onmessage = (event) => {
+            let buffer = event.data;
+            const rawUint8 = new Uint8Array(buffer);
+            const hex = toHex(buffer);
+            
+            // Critical: Ensure multiple of 4 for library stability
+            if (buffer.byteLength % 4 !== 0) {
+                const padded = new Uint8Array(Math.ceil(buffer.byteLength / 4) * 4);
+                padded.set(rawUint8);
+                buffer = padded.buffer;
+            }
 
-            const header = decoder.decode(bytes.slice(0, 8));
-            if (header.startsWith("#bundle")) { // Bundle parsing logic
-                let offset = 16;
-                while (offset + 4 <= bytes.length) {
-                    const size = new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getInt32(0, false);
-                    offset += 4;
-                    if (offset + size <= bytes.length) parseMessage(bytes.slice(offset, offset + size));
-                    offset += size;
-                }
+            if (rawUint8[0] === 0x23) { // Bundle starting with '#'
+                processBundle(buffer, hex);
             } else {
-                parseMessage(bytes);
+                processMessage(buffer, hex, rawUint8);
             }
         };
 
-        function parseMessage(bytes) {
-            const addrEnd = bytes.indexOf(0);
-            if (addrEnd === -1) return;
-            const addr = decoder.decode(bytes.slice(0, addrEnd));
-            const tagIdx = Math.ceil((addrEnd + 1) / 4) * 4;
-
-            if (tagIdx >= bytes.length || bytes[tagIdx] !== 44) {
-                sendOSC(addr.replace("/vdj/", "/vdj/query/"));
-                return;
+        function processBundle(buffer, hex) {
+            try {
+                const bundle = new OSC.Bundle();
+                bundle.unpack(new DataView(buffer));
+                if (debugToggle.checked) console.log(`<<< BUNDLE (${bundle.elements.length} items)`);
+                bundle.elements.forEach(m => {
+                    // Note: Bundles don't get the raw bit-check fix here; 
+                    // if VDJ bundles broken booleans, we handle via handleUI normalization
+                    handleUI(m.address, m.args[0]);
+                });
+            } catch (e) {
+                // Fallback: If bundle is malformed, re-query paths found in string
+                const str = new TextDecoder().decode(buffer);
+                const matches = str.match(/\/vdj\/deck\/\d\/[a-z_]+/g);
+                if (matches) matches.forEach(m => sendOSC(m.replace('/vdj/', '/vdj/query/')));
             }
-
-            const type = String.fromCharCode(bytes[tagIdx + 1]);
-            const valIdx = Math.ceil((tagIdx + 2) / 4) * 4;
-            let val;
-
-            if (type === 's') { // String parsing with boolean tail-check
-                const vEnd = bytes.indexOf(0, valIdx);
-                val = decoder.decode(bytes.slice(valIdx, vEnd === -1 ? bytes.length : vEnd)).trim();
-                if (val === "" && bytes.length > valIdx) val = bytes[bytes.length - 1].toString();
-            } else if (type === 'f') { // Float parsing
-                val = new DataView(bytes.buffer, bytes.byteOffset + valIdx, 4).getFloat32(0, false);
-            }
-
-            if (val !== undefined) updateUI(addr, val);
         }
 
-        function updateUI(addr, val) {
+        function processMessage(buffer, hex, rawUint8) {
+            try {
+                const msg = new OSC.Message();
+                msg.unpack(new DataView(buffer));
+                
+                let val = msg.args[0];
+
+                // VDJ FIX: Manual trailing-bit check for booleans hidden in empty string tags
+                const isBoolPath = msg.address.endsWith('/play') || msg.address.includes('is_audible');
+                if (isBoolPath && (val === "" || val === undefined)) {
+                    val = rawUint8[rawUint8.length - 1] === 1;
+                }
+
+                if (debugToggle.checked) {
+                    console.log(`<<< MSG: ${msg.address} | VAL: ${val} | HEX: ${hex}`);
+                }
+                
+                handleUI(msg.address, val);
+            } catch (e) {
+                if (debugToggle.checked) console.error("Unpack error", e);
+            }
+        }
+
+        function handleUI(addr, val) {
             const m = addr.match(/deck\/(\d+)/);
             if (!m) return;
             const dNum = m[1];
-            const deckEl = document.getElementById(`deck-${dNum}`);
+            
+            // Normalize values for UI logic
+            const isActive = (val === 1 || val === "1" || val === true);
 
             if (addr.includes("is_audible")) {
-                states[dNum].audible = (val == "1");
+                states[dNum].audible = isActive;
             } else if (addr.endsWith("/play")) {
-                states[dNum].playing = (val == "1");
-                val == "1" ? deckEl.classList.add('playing') : deckEl.classList.remove('playing');
-            } 
-            // UPDATED: Handle both play_pos and get_position
-            else if (addr.includes("get_position") || addr.includes("play_pos")) {
-                document.getElementById(`d${dNum}-progress`).style.width = (parseFloat(val) * 100) + "%";
-            } 
-            else if (addr.includes("filename")) {
-                document.getElementById(`d${dNum}-file`).innerText = val.split(/[\\/]/).pop().replace(/\.[^/.]+$/, "") || "Empty";
-            } 
-            else if (addr.includes("pitch")) {
-                let p = (parseFloat(val) - 0.5) * 50;
-                document.getElementById(`d${dNum}-pitch`).innerText = (p >= 0 ? "+" : "") + p.toFixed(2) + "%";
+                states[dNum].playing = isActive;
+            } else if (addr.includes("get_position")) {
+                const pos = parseFloat(val);
+                if (!isNaN(pos)) document.getElementById(`d${dNum}-progress`).style.width = (pos * 100) + "%";
+            } else if (addr.includes("filename")) {
+                const name = String(val).split(/[\\/]/).pop().replace(/\.[^/.]+$/, "") || "Empty";
+                document.getElementById(`d${dNum}-file`).innerText = name;
             }
 
-            // ON AIR Sync
-            (states[dNum].playing && states[dNum].audible) ? deckEl.classList.add('on-air') : deckEl.classList.remove('on-air');
+            // Sync On-Air Status
+            const deckEl = document.getElementById(`deck-${dNum}`);
+            if (states[dNum].playing && states[dNum].audible) {
+                deckEl.classList.add('on-air');
+            } else {
+                deckEl.classList.remove('on-air');
+            }
+            
+            document.getElementById('last-msg').innerText = addr;
         }
     </script>
 </body>
