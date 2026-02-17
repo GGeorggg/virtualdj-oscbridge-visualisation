@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>VDJ Live Monitor - Play Status</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #050505; color: #e0e0e0; display: flex; gap: 30px; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        
+        .deck { 
+            background: #111; 
+            border-radius: 20px; 
+            padding: 30px; 
+            width: 360px; 
+            border: 4px solid #222; 
+            position: relative; 
+            transition: all 0.3s ease; 
+            opacity: 0.6; 
+        }
+
+        /* HIGHLIGHT: Audible Deck */
+        .deck.on-air { 
+            border-color: #ff3e3e; 
+            box-shadow: 0 0 40px rgba(255, 62, 62, 0.4); 
+            opacity: 1; 
+            transform: translateY(-5px); 
+        }
+
+        /* PLAY INDICATOR */
+        .play-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            background: #333;
+            margin-left: 10px;
+            clip-path: polygon(0% 0%, 100% 50%, 0% 100%); /* Play Triangle */
+            transition: all 0.2s ease;
+        }
+        .playing .play-indicator {
+            background: #00ff88;
+            box-shadow: 0 0 10px rgba(0, 255, 136, 0.6);
+            transform: scale(1.2);
+        }
+
+        .on-air-label { 
+            position: absolute; 
+            top: -18px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            background: #ff3e3e; 
+            color: white; 
+            font-size: 0.7rem; 
+            font-weight: 900; 
+            padding: 4px 15px; 
+            border-radius: 4px; 
+            display: none; 
+        }
+        .on-air .on-air-label { display: block; }
+
+        .deck-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        h2 { margin: 0; color: #555; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 3px; display: flex; align-items: center; }
+        .on-air h2 { color: #fff; }
+        
+        .pitch-badge { background: #000; padding: 5px 12px; border-radius: 8px; font-size: 0.9rem; color: #00ff88; font-family: monospace; border: 1px solid #333; }
+        .filename { font-size: 1.3rem; font-weight: 600; height: 3em; overflow: hidden; color: #fff; margin-bottom: 25px; line-height: 1.4; }
+        
+        .progress-container { background: #222; height: 10px; border-radius: 10px; overflow: hidden; }
+        .progress-bar { height: 100%; width: 0%; transition: width 0.1s linear; background: #444; }
+        #deck-1.on-air .progress-bar { background: #007bff; }
+        #deck-2.on-air .progress-bar { background: #ff4757; }
+    </style>
+</head>
+<body>
+
+    <div class="deck" id="deck-1">
+        <div class="on-air-label">ON AIR</div>
+        <div class="deck-header">
+            <h2>Deck 1 <span class="play-indicator"></span></h2>
+            <span id="d1-pitch" class="pitch-badge">0.00%</span>
+        </div>
+        <div class="filename" id="d1-file">---</div>
+        <div class="progress-container"><div id="d1-progress" class="progress-bar"></div></div>
+    </div>
+
+    <div class="deck" id="deck-2">
+        <div class="on-air-label">ON AIR</div>
+        <div class="deck-header">
+            <h2>Deck 2 <span class="play-indicator"></span></h2>
+            <span id="d2-pitch" class="pitch-badge">0.00%</span>
+        </div>
+        <div class="filename" id="d2-file">---</div>
+        <div class="progress-container"><div id="d2-progress" class="progress-bar"></div></div>
+    </div>
+
+    <script>
+        const socket = new WebSocket('ws://localhost:9122');
+        const decoder = new TextDecoder("utf-8");
+        const encoder = new TextEncoder();
+
+        function encodeOSC(address) {
+            const addrBytes = encoder.encode(address);
+            const addrPad = Math.ceil((addrBytes.length + 1) / 4) * 4;
+            const buf = new Uint8Array(addrPad + 4);
+            buf.set(addrBytes);
+            buf[addrPad] = 44; // ','
+            return buf;
+        }
+
+        socket.onopen = () => {
+            const paths = [
+                "/vdj/query/deck/1/pitch", "/vdj/query/deck/2/pitch",
+                "/vdj/query/deck/1/get_filename", "/vdj/query/deck/2/get_filename",
+                "/vdj/query/deck/1/is_audible", "/vdj/query/deck/2/is_audible",
+                "/vdj/query/deck/1/play", "/vdj/query/deck/2/play",
+                "/vdj/subscribe/deck/1/pitch", "/vdj/subscribe/deck/2/pitch",
+                "/vdj/subscribe/deck/1/get_filename", "/vdj/subscribe/deck/2/get_filename",
+                "/vdj/subscribe/deck/1/play_pos", "/vdj/subscribe/deck/2/play_pos",
+                "/vdj/subscribe/deck/1/is_audible", "/vdj/subscribe/deck/2/is_audible",
+                "/vdj/subscribe/deck/1/play", "/vdj/subscribe/deck/2/play"
+            ];
+            paths.forEach(p => socket.send(encodeOSC(p)));
+        };
+
+        socket.onmessage = async (e) => {
+            let bytes;
+            if (e.data instanceof Blob) {
+                bytes = new Uint8Array(await e.data.arrayBuffer());
+            } else if (typeof e.data === 'string') {
+                try {
+                    const b = atob(e.data.trim());
+                    bytes = new Uint8Array(b.length);
+                    for (let i=0; i<b.length; i++) bytes[i] = b.charCodeAt(i);
+                } catch(err) { return; }
+            } else {
+                bytes = new Uint8Array(e.data);
+            }
+
+            if (!bytes || bytes.length === 0) return;
+
+            const addrEnd = bytes.indexOf(0);
+            if (addrEnd === -1) return;
+            const addr = decoder.decode(bytes.slice(0, addrEnd));
+
+            const tagIdx = Math.ceil((addrEnd + 1) / 4) * 4;
+            const type = String.fromCharCode(bytes[tagIdx + 1]);
+            const valIdx = Math.ceil((tagIdx + 2) / 4) * 4;
+
+            let val;
+            if (type === 's') {
+                const vEnd = bytes.indexOf(0, valIdx);
+                const raw = (vEnd === -1) ? bytes.slice(valIdx) : bytes.slice(valIdx, vEnd);
+                val = decoder.decode(raw).replace(/\0/g, '').trim();
+
+                // Tail-check for boolean-style strings (as seen in your hex samples)
+                if (val === "" && bytes.length > valIdx) {
+                    val = bytes[bytes.length - 1].toString();
+                }
+            } else if (type === 'f') {
+                val = new DataView(bytes.buffer, bytes.byteOffset + valIdx, 4).getFloat32(0, false);
+            }
+
+            if (val !== undefined) updateUI(addr, val);
+        };
+
+        function updateUI(addr, val) {
+            const m = addr.match(/deck\/(\d+)/);
+            if (!m) return;
+            const dNum = m[1];
+            const deckEl = document.getElementById(`deck-${dNum}`);
+
+            if (addr.includes("is_audible")) {
+                if (val == "1") deckEl.classList.add('on-air');
+                else deckEl.classList.remove('on-air');
+            } 
+            else if (addr.endsWith("/play")) {
+                if (val == "1") deckEl.classList.add('playing');
+                else deckEl.classList.remove('playing');
+            }
+            else if (addr.includes("pitch")) {
+                let p = parseFloat(val);
+                let displayPitch = (p - 0.5) * 50;
+                if (p > 5 || p < -5) displayPitch = p;
+                document.getElementById(`d${dNum}-pitch`).innerText = (displayPitch >= 0 ? "+" : "") + displayPitch.toFixed(2) + "%";
+            } 
+            else if (addr.includes("filename")) {
+                document.getElementById(`d${dNum}-file`).innerText = val.split(/[\\/]/).pop().replace(/\.[^/.]+$/, "") || "Empty";
+            } 
+            else if (addr.includes("play_pos")) {
+                document.getElementById(`d${dNum}-progress`).style.width = (parseFloat(val) * 100) + "%";
+            }
+        }
+    </script>
+</body>
+</html>
