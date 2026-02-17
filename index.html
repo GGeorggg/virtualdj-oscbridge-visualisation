@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>VDJ Monitor - Pitch Range Sync</title>
+    <title>VDJ Monitor - Precision Time Sync</title>
     <script src="https://cdn.jsdelivr.net/npm/osc-js@2.1.0/lib/osc.min.js"></script>
     <style>
         * { box-sizing: border-box; }
@@ -11,29 +11,32 @@
         .decks { display: flex; gap: 20px; }
         .deck { background: #0a0a0a; border: 3px solid #222; border-radius: 20px; width: 400px; padding: 25px; position: relative; overflow: hidden; border: 3px solid #222; }
         .deck.on-air { border-color: #ff3e3e; box-shadow: 0 0 30px rgba(255, 62, 62, 0.2); }
-        .v-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; z-index: 0; pointer-events: none; }
+        .v-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; z-index: 0; pointer-events: none; }
         .has-vid .v-bg { opacity: 0.4; }
         .content { position: relative; z-index: 1; pointer-events: none; }
         .status-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; font-family: monospace; border: 1px solid #333; background: rgba(0,0,0,0.7); }
         .pitch-badge { color: #00ff88; }
-        .play-icon { width: 12px; height: 12px; background: #333; clip-path: polygon(0% 0%, 100% 50%, 0% 100%); }
-        .playing .play-icon { background: #00ff88; }
-        .audible-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; }
-        .is-audible .audible-dot { background: #ff3e3e; }
         .track-name { font-size: 1.3rem; font-weight: 800; height: 2.8em; margin: 15px 0; color: #fff; overflow: hidden; }
         .vol-rail { height: 30px; background: #151515; border: 1px solid #222; border-radius: 6px; overflow: hidden; }
         .vol-bar { height: 100%; width: 0%; background: #00ff88; }
         .on-air .vol-bar { background: #ff3e3e; }
-        .prog-rail { height: 4px; background: #222; margin-top: 15px; }
+        
+        .time-display { display: flex; justify-content: space-between; font-family: monospace; font-size: 0.85rem; margin-top: 15px; color: #aaa; }
+        .prog-rail { height: 6px; background: #222; margin-top: 4px; border-radius: 3px; overflow: hidden; }
         .prog-bar { height: 100%; width: 0%; background: #fff; }
+        
+        .play-icon { width: 12px; height: 12px; background: #333; clip-path: polygon(0% 0%, 100% 50%, 0% 100%); }
+        .playing .play-icon { background: #00ff88; }
+        .audible-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; }
+        .is-audible .audible-dot { background: #ff3e3e; }
     </style>
 </head>
 <body>
 
     <div class="controls">
         <div id="status">Syncing...</div>
-        <div style="color: #666; font-size: 10px;">QUERYING: pitch_range + Last-Bit Extraction</div>
+        <div style="color: #666; font-size: 10px;">QUERYING: get_time "elapsed" (ms)</div>
     </div>
 
     <div class="decks">
@@ -50,10 +53,10 @@
                 </div>
                 <div class="track-name" id="name-1">---</div>
                 <div class="vol-rail"><div id="vol-1" class="vol-bar"></div></div>
+                <div class="time-display"><span id="elapsed-1">00:00.000</span><span style="font-size: 0.6rem; opacity: 0.5;">ELAPSED</span></div>
                 <div class="prog-rail"><div id="prog-1" class="prog-bar"></div></div>
             </div>
         </div>
-
         <div class="deck" id="deck-2">
             <video id="vid-2" class="v-bg" muted loop playsinline></video>
             <div class="content">
@@ -67,6 +70,7 @@
                 </div>
                 <div class="track-name" id="name-2">---</div>
                 <div class="vol-rail"><div id="vol-2" class="vol-bar"></div></div>
+                <div class="time-display"><span id="elapsed-2">00:00.000</span><span style="font-size: 0.6rem; opacity: 0.5;">ELAPSED</span></div>
                 <div class="prog-rail"><div id="prog-2" class="prog-bar"></div></div>
             </div>
         </div>
@@ -76,8 +80,8 @@
         const socket = new WebSocket('ws://localhost:9122');
         socket.binaryType = 'arraybuffer';
         const vdjData = {
-            1: { play: false, audible: false, file: "", vol: 0, pos: 0, pitch: 0, range: 0.16 },
-            2: { play: false, audible: false, file: "", vol: 0, pos: 0, pitch: 0, range: 0.16 }
+            1: { play: false, audible: false, file: "", vol: 0, pos: 0, pitch: 0, range: 0.25, time: 0 },
+            2: { play: false, audible: false, file: "", vol: 0, pos: 0, pitch: 0, range: 0.25, time: 0 }
         };
 
         const toHex = (buffer) => Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
@@ -87,49 +91,62 @@
             document.getElementById('status').innerText = "CONNECTED";
             document.getElementById('status').style.color = "#00ff88";
             
-            // Initial Subscriptions including pitch_range
-            const paths = ["get_filename", "get_position", "is_audible", "play", "volume", "pitch", "pitch_range"];
-            [1, 2].forEach(d => paths.forEach(p => {
-                sendOSC(`/vdj/subscribe/deck/${d}/${p}`);
-                sendOSC(`/vdj/query/deck/${d}/${p}`);
-            }));
+            [1, 2].forEach(d => {
+                ["get_filename", "get_position", "is_audible", "play", "volume", "pitch", "pitch_range", "get_time"].forEach(p => {
+                    sendOSC(`/vdj/subscribe/deck/${d}/${p}`);
+                    // Use "elapsed" argument for get_time queries
+                    p === "get_time" ? sendOSC(`/vdj/query/deck/${d}/${p}`, "elapsed") : sendOSC(`/vdj/query/deck/${d}/${p}`);
+                });
+            });
             requestAnimationFrame(renderLoop);
         };
 
-        function sendOSC(address) {
+        // ENHANCED sendOSC with Argument Support
+        function sendOSC(address, arg = null) {
             const encoder = new TextEncoder();
             const addrBytes = encoder.encode(address);
             const addrPad = Math.ceil((addrBytes.length + 1) / 4) * 4;
-            const buf = new Uint8Array(addrPad + 4);
-            buf.set(addrBytes);
-            buf.set([44, 0, 0, 0], addrPad);
+            
+            let buf;
+            if (arg) {
+                const argBytes = encoder.encode(arg);
+                const argPad = Math.ceil((argBytes.length + 1) / 4) * 4;
+                const typeTag = encoder.encode(",s"); // ,s for string
+                const typePad = 4;
+                
+                buf = new Uint8Array(addrPad + typePad + argPad);
+                buf.set(addrBytes);
+                buf.set(typeTag, addrPad);
+                buf.set(argBytes, addrPad + typePad);
+            } else {
+                buf = new Uint8Array(addrPad + 4);
+                buf.set(addrBytes);
+                buf.set([44, 0, 0, 0], addrPad); // Empty type tag ","
+            }
+            
             socket.send(buf);
-            console.log(`%c>>> OUTGOING: ${address}`, "color: #00ff88; font-weight: bold;");
+            console.log(`%c>>> OUTGOING: ${address} ${arg ? `[${arg}]` : ''}`, "color: #00ff88; font-weight: bold;");
         }
 
         socket.onmessage = (event) => {
             const raw = new Uint8Array(event.data);
-            const hex = toHex(event.data);
             const ascii = toAscii(event.data);
 
             console.groupCollapsed(`OSC IN: ${ascii.slice(0, 40)}...`);
-            console.log("HEX:", hex);
+            console.log("HEX:", toHex(event.data));
             console.log("ASCII:", ascii);
 
-            // 1. POLLING TRIGGER (For notifications in bundles)
             if (ascii.includes("#bundle")) {
-                const queryPaths = ["play", "is_audible", "get_filename", "volume", "pitch", "pitch_range"];
                 [1, 2].forEach(d => {
-                    queryPaths.forEach(p => {
-                        const searchPath = `/vdj/deck/${d}/${p}`;
-                        if (ascii.includes(searchPath) && !ascii.slice(ascii.indexOf(searchPath)+searchPath.length, ascii.indexOf(searchPath)+searchPath.length+8).includes(",")) {
-                            sendOSC(`/vdj/query/deck/${d}/${p}`);
+                    ["play", "is_audible", "get_filename", "volume", "pitch", "pitch_range", "get_time", "get_position"].forEach(p => {
+                        const path = `/vdj/deck/${d}/${p}`;
+                        if (ascii.includes(path) && !ascii.slice(ascii.indexOf(path)+path.length, ascii.indexOf(path)+path.length+8).includes(",")) {
+                            p === "get_time" ? sendOSC(`/vdj/query/deck/${d}/${p}`, "elapsed") : sendOSC(`/vdj/query/deck/${d}/${p}`);
                         }
                     });
                 });
             }
 
-            // 2. DATA PROCESSING
             try {
                 const msg = new OSC.Message();
                 msg.unpack(new DataView(event.data));
@@ -138,47 +155,42 @@
                 
                 if (d) {
                     let val = msg.args[0];
+                    if (addr.includes("play") || addr.includes("is_audible")) val = (raw[raw.length - 1] === 1);
 
-                    // VDJ BIT OVERRIDE for Boolean Types (Play/Audible)
-                    if (addr.includes("play") || addr.includes("is_audible")) {
-                        val = (raw[raw.length - 1] === 1);
-                        console.log(`%c[BIT-SCAN] ${addr} -> ${val}`, "color: #ff00ff;");
-                    }
-
-                    if (addr.includes("pitch_range")) {
-                        vdjData[d].range = parseFloat(val);
-                        console.log(`%c[RANGE] Deck ${d} range set to: ${val*100}%`, "color: #00ff88;");
-                    }
-                    else if (addr.includes("pitch")) {
-                        // Math: (Normalized - Center) * (Range * 100)
-                        // If VDJ sends 0.5 at center, and range is 0.25 (25%): (0.5 - 0.5) * 25 = 0%
-                        // If VDJ sends 1.0 at max, and range is 0.25: (1.0 - 0.5) * 2 * 25 = +25%
-                        vdjData[d].pitch = (parseFloat(val) - 0.5) * 2 * (vdjData[d].range * 100);
-                    }
+                    if (addr.includes("get_time")) vdjData[d].time = parseInt(val); // Already MS from VDJ
+                    else if (addr.includes("pitch_range")) vdjData[d].range = parseFloat(val);
+                    else if (addr.includes("pitch")) vdjData[d].pitch = (parseFloat(val) - 0.5) * 2 * (vdjData[d].range * 100);
                     else if (addr.includes("volume")) vdjData[d].vol = val * 100;
-                    else if (addr.includes("position")) vdjData[d].pos = val * 100;
+                    else if (addr.includes("get_position")) vdjData[d].pos = val * 100;
                     else if (addr.includes("play")) vdjData[d].play = val;
                     else if (addr.includes("is_audible")) vdjData[d].audible = val;
                     else if (addr.includes("get_filename") && val) {
                         vdjData[d].file = String(val).replace(/\.[^/.]+$/, "");
                         checkVideo(d, vdjData[d].file);
                     }
-
-                    if (!addr.includes('position')) console.log(`%c[UPDATE] D${d} ${addr.split('/').pop()}: ${val}`, "color: #00ccff;");
                 }
             } catch (e) {}
             console.groupEnd();
         };
 
+        function formatMS(ms) {
+            if (!ms || ms < 0) return "00:00.000";
+            const mins = Math.floor(ms / 60000);
+            const secs = Math.floor((ms % 60000) / 1000);
+            const mils = Math.floor(ms % 1000);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${mils.toString().padStart(3, '0')}`;
+        }
+
         function renderLoop() {
             [1, 2].forEach(d => {
                 const data = vdjData[d];
-                const el = document.getElementById(`deck-${d}`);
                 document.getElementById(`vol-${d}`).style.width = `${data.vol}%`;
                 document.getElementById(`prog-${d}`).style.width = `${data.pos}%`;
                 document.getElementById(`pitch-${d}`).innerText = (data.pitch >= 0 ? "+" : "") + data.pitch.toFixed(2) + "%";
                 document.getElementById(`name-${d}`).innerText = data.file || "---";
+                document.getElementById(`elapsed-${d}`).innerText = formatMS(data.time);
 
+                const el = document.getElementById(`deck-${d}`);
                 data.play ? el.classList.add('playing') : el.classList.remove('playing');
                 data.audible ? el.classList.add('is-audible') : el.classList.remove('is-audible');
                 (data.play && data.audible) ? el.classList.add('on-air') : el.classList.remove('on-air');
